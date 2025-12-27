@@ -336,7 +336,19 @@ ReadState tr_handshake::read_peer_id(tr_peerIo* peer_io)
     }
     peer_io->read_bytes(std::data(peer_id), Needlen);
     set_peer_id(peer_id);
+    
+    if ((std::strncmp(std::data(peer_id),"-XL0018",7)==0)||
+        (std::strncmp(std::data(peer_id),"-XL0012",7)==0)||
+        (std::strncmp(std::data(peer_id),"-qB4670",7)==0)||
+        (std::strncmp(std::data(peer_id),"-GT00",5)==0)||
+        (std::strncmp(std::data(peer_id),"-HP00",5)==0)
+        //||((peer_id[2]=='-')&&(peer_id[7]=='-'))
+        )
+    {
+        tr_logAddTraceHand(this, "Xunlei the leecher");
+        return ParseResult::BadTorrent;
 
+    }
     auto client = std::array<char, 128>{};
     tr_clientForId(std::data(client), std::size(client), peer_id);
     tr_logAddTraceHand(this, fmt::format("peer-id is '{}' ... isIncoming is {}", std::data(client), is_incoming()));
