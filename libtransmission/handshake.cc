@@ -346,7 +346,7 @@ ReadState tr_handshake::read_peer_id(tr_peerIo* peer_io)
         )
     {
         tr_logAddTraceHand(this, "Xunlei the leecher");
-        return ParseResult::BadTorrent;
+        return done(false);
 
     }
     auto client = std::array<char, 128>{};
