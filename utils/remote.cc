@@ -198,6 +198,7 @@ struct RemoteConfig
 
 enum
 {
+    ID_NOOP,
     ID_SESSION,
     ID_STATS,
     ID_DETAILS,
@@ -209,7 +210,8 @@ enum
     ID_PIECES,
     ID_PORTTEST,
     ID_TORRENT_ADD,
-    ID_TRACKERS
+    ID_TRACKERS,
+    ID_BLOCKLIST,
 };
 
 // --- Command-Line Arguments
@@ -1423,7 +1425,7 @@ void print_file_list(tr_variant::Map const& result)
 
 void print_peers_impl(tr_variant::Vector const& peers)
 {
-    fmt::print("{:<40s}  {:<12s}  {:<5s} {:<6s}  {:<6s}  {:s}\n", "Address", "Flags", "Done", "Down", "Up", "Client");
+    fmt::print("{:<40s}  {:<12s}  {:<5s} {:<8s}  {:<8s}  {:s}\n", "Address", "Flags", "Done", "Down", "Up", "Client");
 
     for (auto const& peer_var : peers)
     {
@@ -1443,7 +1445,7 @@ void print_peers_impl(tr_variant::Vector const& peers)
         if (address && client && progress && flagstr && rate_to_client && rate_to_peer)
         {
             fmt::print(
-                "{:<40s}  {:<12s}  {:<5s} {:6.1f}  {:6.1f}  {:s}\n",
+                "{:<40s}  {:<12s}  {:<5s} {:8.1f}  {:8.1f}  {:s}\n",
                 *address,
                 *flagstr,
                 strlpercent(*progress * 100.0),
@@ -1558,7 +1560,7 @@ void print_torrent_list(tr_variant::Map const& result)
     }
 
     fmt::print(
-        "{:>6s}   {:>5s}  {:>9s}  {:<9s}  {:>6s}  {:>6s}  {:<5s}  {:<11s}  {:<s}\n",
+        "{:>6s}   {:>5s}  {:>9s}  {:<9s}  {:>8s}  {:>8s}  {:<5s}  {:<11s}  {:<s}\n",
         "ID",
         "Done",
         "Have",
@@ -1624,7 +1626,7 @@ void print_torrent_list(tr_variant::Map const& result)
             std::string{ "n/a" };
 
         fmt::print(
-            "{:>6d}{:c}  {:>5s}  {:>9s}  {:<9s}  {:6.1f}  {:6.1f}  {:>5s}  {:<11s}  {:<s}\n",
+            "{:>6d}{:c}  {:>5s}  {:>9s}  {:<9s}  {:8.1f}  {:8.1f}  {:>5s}  {:<11s}  {:<s}\n",
             *o_tor_id,
             error_mark,
             done_str,
@@ -1642,7 +1644,7 @@ void print_torrent_list(tr_variant::Map const& result)
     }
 
     fmt::print(
-        "Sum:            {:>9s}             {:6.1f}  {:6.1f}\n",
+        "Sum:            {:>9s}             {:8.1f}  {:8.1f}\n",
         strlsize(total_size).c_str(),
         Speed{ total_up, Speed::Units::Byps }.count(Speed::Units::KByps),
         Speed{ total_down, Speed::Units::Byps }.count(Speed::Units::KByps));
@@ -2228,6 +2230,14 @@ void filter_ids(tr_variant::Map const& result, RemoteConfig& config)
     }
 }
 
+void print_blocklist_size(tr_variant::Map const& result)
+{
+    if (auto const i = result.value_if<int64_t>(TR_KEY_blocklist_size))
+    {
+        fmt::print("Blocklist size: {:d}\n", *i);
+    }
+}
+
 int process_response(char const* rpcurl, std::string_view const response, RemoteConfig& config)
 {
     if (config.json)
@@ -2284,7 +2294,7 @@ int process_response(char const* rpcurl, std::string_view const response, Remote
     auto* result = top->find_if<tr_variant::Map>(TR_KEY_result);
     result = result ? result : &empty_result;
 
-    switch (top->value_if<int64_t>(TR_KEY_id).value_or(-1))
+    switch (top->value_if<int64_t>(TR_KEY_id).value_or(ID_NOOP))
     {
     case ID_SESSION:
         print_session(*result);
@@ -2328,6 +2338,10 @@ int process_response(char const* rpcurl, std::string_view const response, Remote
 
     case ID_FILTER:
         filter_ids(*result, config);
+        break;
+
+    case ID_BLOCKLIST:
+        print_blocklist_size(*result);
         break;
 
     case ID_TORRENT_ADD:
@@ -2465,6 +2479,7 @@ int flush(char const* rpcurl, tr_variant* const var, RemoteConfig& config)
             break;
 
         case 204:
+            fmt::print("{:s} acknowledged request\n", rpcurl);
             break;
 
         case 409:
@@ -2503,6 +2518,7 @@ tr_variant::Map& ensure_sset(tr_variant& sset)
         map = sset.get_if<tr_variant::Map>();
         map->try_emplace(TR_KEY_jsonrpc, tr_variant::unmanaged_string(JsonRpc::Version));
         map->try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_session_set));
+        map->try_emplace(TR_KEY_id, ID_NOOP);
     }
 
     auto* params = map->find_if<tr_variant::Map>(TR_KEY_params);
@@ -2518,10 +2534,11 @@ tr_variant::Map& ensure_tset(tr_variant& tset)
     auto* map = tset.get_if<tr_variant::Map>();
     if (map == nullptr)
     {
-        tset = tr_variant::Map{ 3 };
+        tset = tr_variant::Map{ 4U };
         map = tset.get_if<tr_variant::Map>();
         map->try_emplace(TR_KEY_jsonrpc, tr_variant::unmanaged_string(JsonRpc::Version));
         map->try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_set));
+        map->try_emplace(TR_KEY_id, ID_NOOP);
     }
 
     auto* params = map->find_if<tr_variant::Map>(TR_KEY_params);
@@ -3328,9 +3345,10 @@ int process_args(char const* rpcurl, int argc, char const* const* argv, RemoteCo
 
             case 963:
                 {
-                    auto map = tr_variant::Map{ 2U };
+                    auto map = tr_variant::Map{ 3U };
                     map.try_emplace(TR_KEY_jsonrpc, tr_variant::unmanaged_string(JsonRpc::Version));
                     map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_blocklist_update));
+                    map.try_emplace(TR_KEY_id, ID_BLOCKLIST);
                     auto top = tr_variant{ std::move(map) };
                     status |= flush(rpcurl, &top, config);
                 }
@@ -3365,10 +3383,11 @@ int process_args(char const* rpcurl, int argc, char const* const* argv, RemoteCo
                     params.try_emplace(TR_KEY_move, true);
                     add_id_arg(params, config);
 
-                    auto map = tr_variant::Map{ 3U };
+                    auto map = tr_variant::Map{ 4U };
                     map.try_emplace(TR_KEY_jsonrpc, tr_variant::unmanaged_string(JsonRpc::Version));
                     map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_set_location));
                     map.try_emplace(TR_KEY_params, std::move(params));
+                    map.try_emplace(TR_KEY_id, ID_NOOP);
 
                     auto top = tr_variant{ std::move(map) };
                     status |= flush(rpcurl, &top, config);
@@ -3395,10 +3414,11 @@ int process_args(char const* rpcurl, int argc, char const* const* argv, RemoteCo
                     params.try_emplace(TR_KEY_move, false);
                     add_id_arg(params, config);
 
-                    auto map = tr_variant::Map{ 3U };
+                    auto map = tr_variant::Map{ 4U };
                     map.try_emplace(TR_KEY_jsonrpc, tr_variant::unmanaged_string(JsonRpc::Version));
                     map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_set_location));
                     map.try_emplace(TR_KEY_params, std::move(params));
+                    map.try_emplace(TR_KEY_id, ID_NOOP);
 
                     auto top = tr_variant{ std::move(map) };
                     status |= flush(rpcurl, &top, config);
@@ -3412,10 +3432,11 @@ int process_args(char const* rpcurl, int argc, char const* const* argv, RemoteCo
                     args.try_emplace(TR_KEY_name, optarg_sv);
                     add_id_arg(args, config);
 
-                    auto map = tr_variant::Map{ 3U };
+                    auto map = tr_variant::Map{ 4U };
                     map.try_emplace(TR_KEY_jsonrpc, tr_variant::unmanaged_string(JsonRpc::Version));
                     map.try_emplace(TR_KEY_method, tr_variant::unmanaged_string(TR_KEY_torrent_rename_path));
                     map.try_emplace(TR_KEY_params, std::move(args));
+                    map.try_emplace(TR_KEY_id, ID_NOOP);
 
                     auto top = tr_variant{ std::move(map) };
                     status |= flush(rpcurl, &top, config);
