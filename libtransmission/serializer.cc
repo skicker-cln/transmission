@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include <fmt/format.h>
@@ -38,7 +39,62 @@ namespace libtransmission::serializer
 namespace
 {
 template<typename T, size_t N>
-using Lookup = std::array<std::pair<std::string_view, T>, N>;
+using LookupTable = std::array<std::pair<std::string_view, T>, N>;
+
+template<typename T, size_t N>
+[[nodiscard]] tr_variant from_enum_or_integral_with_lookup(LookupTable<T, N> const& rows, T const src)
+{
+    static_assert(std::is_enum_v<T> || std::is_integral_v<T>);
+
+    for (auto const& [key, value] : rows)
+    {
+        if (value == src)
+        {
+            return tr_variant::unmanaged_string(key);
+        }
+    }
+
+    return static_cast<int64_t>(src);
+}
+
+template<typename T, size_t N>
+[[nodiscard]] bool to_enum_or_integral_with_lookup(LookupTable<T, N> const& rows, tr_variant const& src, T* tgt)
+{
+    static_assert(std::is_enum_v<T> || std::is_integral_v<T>);
+
+    if (tgt == nullptr)
+    {
+        return false;
+    }
+
+    if (auto const val = src.value_if<std::string_view>())
+    {
+        auto const needle = tr_strlower(tr_strv_strip(*val));
+
+        for (auto const& [key, value] : rows)
+        {
+            if (key == needle)
+            {
+                *tgt = value;
+                return true;
+            }
+        }
+    }
+
+    if (auto const val = src.value_if<int64_t>())
+    {
+        for (auto const& [key, value] : rows)
+        {
+            if (static_cast<int64_t>(value) == *val)
+            {
+                *tgt = value;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
 
 // ---
 
@@ -96,7 +152,7 @@ tr_variant from_int64(int64_t const& val)
 
 // ---
 
-auto constexpr EncryptionKeys = Lookup<tr_encryption_mode, 3U>{ {
+auto constexpr EncryptionKeys = LookupTable<tr_encryption_mode, 3U>{ {
     { "required", TR_ENCRYPTION_REQUIRED },
     { "preferred", TR_ENCRYPTION_PREFERRED },
     { "allowed", TR_CLEAR_PREFERRED },
@@ -104,45 +160,17 @@ auto constexpr EncryptionKeys = Lookup<tr_encryption_mode, 3U>{ {
 
 bool to_encryption_mode(tr_variant const& src, tr_encryption_mode* tgt)
 {
-    static constexpr auto& Keys = EncryptionKeys;
-
-    if (auto const val = src.value_if<std::string_view>())
-    {
-        auto const needle = tr_strlower(tr_strv_strip(*val));
-
-        for (auto const& [key, encryption] : Keys)
-        {
-            if (key == needle)
-            {
-                *tgt = encryption;
-                return true;
-            }
-        }
-    }
-
-    if (auto const val = src.value_if<int64_t>())
-    {
-        for (auto const& [key, encryption] : Keys)
-        {
-            if (encryption == *val)
-            {
-                *tgt = encryption;
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return to_enum_or_integral_with_lookup(EncryptionKeys, src, tgt);
 }
 
 tr_variant from_encryption_mode(tr_encryption_mode const& val)
 {
-    return static_cast<int64_t>(val);
+    return from_enum_or_integral_with_lookup(EncryptionKeys, val);
 }
 
 // ---
 
-auto constexpr LogKeys = Lookup<tr_log_level, 7U>{ {
+auto constexpr LogKeys = LookupTable<tr_log_level, 7U>{ {
     { "critical", TR_LOG_CRITICAL },
     { "debug", TR_LOG_DEBUG },
     { "error", TR_LOG_ERROR },
@@ -154,35 +182,7 @@ auto constexpr LogKeys = Lookup<tr_log_level, 7U>{ {
 
 bool to_log_level(tr_variant const& src, tr_log_level* tgt)
 {
-    static constexpr auto& Keys = LogKeys;
-
-    if (auto const val = src.value_if<std::string_view>())
-    {
-        auto const needle = tr_strlower(tr_strv_strip(*val));
-
-        for (auto const& [name, log_level] : Keys)
-        {
-            if (needle == name)
-            {
-                *tgt = log_level;
-                return true;
-            }
-        }
-    }
-
-    if (auto const val = src.value_if<int64_t>())
-    {
-        for (auto const& [name, log_level] : Keys)
-        {
-            if (log_level == *val)
-            {
-                *tgt = log_level;
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return to_enum_or_integral_with_lookup(LogKeys, src, tgt);
 }
 
 tr_variant from_log_level(tr_log_level const& val)
@@ -255,7 +255,7 @@ tr_variant from_port(tr_port const& val)
 
 // ---
 
-auto constexpr PreallocationKeys = Lookup<tr_open_files::Preallocation, 5U>{ {
+auto constexpr PreallocationKeys = LookupTable<tr_open_files::Preallocation, 5U>{ {
     { "off", tr_open_files::Preallocation::None },
     { "none", tr_open_files::Preallocation::None },
     { "fast", tr_open_files::Preallocation::Sparse },
@@ -265,35 +265,7 @@ auto constexpr PreallocationKeys = Lookup<tr_open_files::Preallocation, 5U>{ {
 
 bool to_preallocation_mode(tr_variant const& src, tr_open_files::Preallocation* tgt)
 {
-    static constexpr auto& Keys = PreallocationKeys;
-
-    if (auto const val = src.value_if<std::string_view>())
-    {
-        auto const needle = tr_strlower(tr_strv_strip(*val));
-
-        for (auto const& [name, value] : Keys)
-        {
-            if (name == needle)
-            {
-                *tgt = value;
-                return true;
-            }
-        }
-    }
-
-    if (auto const val = src.value_if<int64_t>())
-    {
-        for (auto const& [name, value] : Keys)
-        {
-            if (value == static_cast<tr_open_files::Preallocation>(*val))
-            {
-                *tgt = value;
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return to_enum_or_integral_with_lookup(PreallocationKeys, src, tgt);
 }
 
 tr_variant from_preallocation_mode(tr_open_files::Preallocation const& val)
@@ -303,7 +275,7 @@ tr_variant from_preallocation_mode(tr_open_files::Preallocation const& val)
 
 // ---
 
-auto constexpr PreferredTransportKeys = Lookup<tr_preferred_transport, TR_NUM_PREFERRED_TRANSPORT>{ {
+auto constexpr PreferredTransportKeys = LookupTable<tr_preferred_transport, TR_NUM_PREFERRED_TRANSPORT>{ {
     { "utp", TR_PREFER_UTP },
     { "tcp", TR_PREFER_TCP },
 } };
@@ -314,30 +286,8 @@ bool to_preferred_transport(
 {
     static auto constexpr LoadSingle = [](tr_variant const& var)
     {
-        static constexpr auto& Keys = PreferredTransportKeys;
-
-        if (auto const val = var.value_if<std::string_view>())
-        {
-            auto const needle = tr_strlower(tr_strv_strip(*val));
-
-            for (auto const& [name, value] : Keys)
-            {
-                if (name == needle)
-                {
-                    return value;
-                }
-            }
-        }
-
-        if (auto const val = var.value_if<int64_t>())
-        {
-            if (auto const i = *val; i >= 0 && i < TR_NUM_PREFERRED_TRANSPORT)
-            {
-                return static_cast<tr_preferred_transport>(i);
-            }
-        }
-
-        return TR_NUM_PREFERRED_TRANSPORT;
+        auto tmp = tr_preferred_transport{};
+        return to_enum_or_integral_with_lookup(PreferredTransportKeys, var, &tmp) ? tmp : TR_NUM_PREFERRED_TRANSPORT;
     };
 
     if (auto* const l = src.get_if<tr_variant::Vector>(); l != nullptr)
@@ -374,15 +324,7 @@ tr_variant from_preferred_transport(small::max_size_vector<tr_preferred_transpor
 {
     static auto constexpr SaveSingle = [](tr_preferred_transport const ele) -> tr_variant
     {
-        for (auto const& [key, value] : PreferredTransportKeys)
-        {
-            if (value == ele)
-            {
-                return key;
-            }
-        }
-
-        return ele;
+        return from_enum_or_integral_with_lookup(PreferredTransportKeys, ele);
     };
 
     auto ret = tr_variant::Vector{};
@@ -451,84 +393,75 @@ tr_variant from_string(std::string const& val)
 
 // ---
 
+// RFCs 2474, 3246, 4594 & 8622
+// Service class names are defined in RFC 4594, RFC 5865, and RFC 8622.
+// Not all platforms have these IPTOS_ definitions, so hardcode them here
+auto constexpr DiffServKeys = LookupTable<int, 28U>{ {
+    { "cs0", 0x00 }, // IPTOS_CLASS_CS0
+    { "le", 0x04 },
+    { "cs1", 0x20 }, // IPTOS_CLASS_CS1
+    { "af11", 0x28 }, // IPTOS_DSCP_AF11
+    { "af12", 0x30 }, // IPTOS_DSCP_AF12
+    { "af13", 0x38 }, // IPTOS_DSCP_AF13
+    { "cs2", 0x40 }, // IPTOS_CLASS_CS2
+    { "af21", 0x48 }, // IPTOS_DSCP_AF21
+    { "af22", 0x50 }, // IPTOS_DSCP_AF22
+    { "af23", 0x58 }, // IPTOS_DSCP_AF23
+    { "cs3", 0x60 }, // IPTOS_CLASS_CS3
+    { "af31", 0x68 }, // IPTOS_DSCP_AF31
+    { "af32", 0x70 }, // IPTOS_DSCP_AF32
+    { "af33", 0x78 }, // IPTOS_DSCP_AF33
+    { "cs4", 0x80 }, // IPTOS_CLASS_CS4
+    { "af41", 0x88 }, // IPTOS_DSCP_AF41
+    { "af42", 0x90 }, // IPTOS_DSCP_AF42
+    { "af43", 0x98 }, // IPTOS_DSCP_AF43
+    { "cs5", 0xa0 }, // IPTOS_CLASS_CS5
+    { "ef", 0xb8 }, // IPTOS_DSCP_EF
+    { "cs6", 0xc0 }, // IPTOS_CLASS_CS6
+    { "cs7", 0xe0 }, // IPTOS_CLASS_CS7
+
+    // <netinet/ip.h> lists these TOS names as deprecated,
+    // but keep them defined here for backward compatibility
+    { "routine", 0x00 }, // IPTOS_PREC_ROUTINE
+    { "lowcost", 0x02 }, // IPTOS_LOWCOST
+    { "mincost", 0x02 }, // IPTOS_MINCOST
+    { "reliable", 0x04 }, // IPTOS_RELIABILITY
+    { "throughput", 0x08 }, // IPTOS_THROUGHPUT
+    { "lowdelay", 0x10 }, // IPTOS_LOWDELAY
+} };
+
 bool to_diffserv_t(tr_variant const& src, tr_diffserv_t* tgt)
 {
-    if (auto const val = src.value_if<std::string_view>())
+    auto tmp = int{};
+    if (!to_enum_or_integral_with_lookup(DiffServKeys, src, &tmp))
     {
-        if (auto const tos = tr_diffserv_t::from_string(*val); tos)
-        {
-            *tgt = *tos;
-            return true;
-        }
-
         return false;
     }
 
-    if (auto const val = src.value_if<int64_t>())
-    {
-        *tgt = tr_diffserv_t{ static_cast<int>(*val) };
-        return true;
-    }
-
-    return false;
+    *tgt = tr_diffserv_t{ tmp };
+    return true;
 }
 
 tr_variant from_diffserv_t(tr_diffserv_t const& val)
 {
-    return val.toString();
+    return from_enum_or_integral_with_lookup(DiffServKeys, static_cast<int>(val));
 }
 
 // ---
 
-auto constexpr VerifyModeKeys = Lookup<tr_verify_added_mode, 2U>{ {
+auto constexpr VerifyModeKeys = LookupTable<tr_verify_added_mode, 2U>{ {
     { "fast", TR_VERIFY_ADDED_FAST },
     { "full", TR_VERIFY_ADDED_FULL },
 } };
 
 bool to_verify_added_mode(tr_variant const& src, tr_verify_added_mode* tgt)
 {
-    static constexpr auto& Keys = VerifyModeKeys;
-
-    if (auto const val = src.value_if<std::string_view>())
-    {
-        auto const needle = tr_strlower(tr_strv_strip(*val));
-
-        for (auto const& [name, value] : Keys)
-        {
-            if (name == needle)
-            {
-                *tgt = value;
-                return true;
-            }
-        }
-    }
-
-    if (auto const val = src.value_if<int64_t>())
-    {
-        for (auto const& [name, value] : Keys)
-        {
-            if (value == *val)
-            {
-                *tgt = value;
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return to_enum_or_integral_with_lookup(VerifyModeKeys, src, tgt);
 }
 
 tr_variant from_verify_added_mode(tr_verify_added_mode const& val)
 {
-    for (auto const& [key, value] : VerifyModeKeys)
-    {
-        if (value == val)
-        {
-            return key;
-        }
-    }
-
-    return static_cast<int64_t>(val);
+    return from_enum_or_integral_with_lookup(VerifyModeKeys, val);
 }
 } // unnamed namespace
 

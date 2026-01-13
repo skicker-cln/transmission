@@ -3,19 +3,19 @@
 // or any future license endorsed by Mnemosyne LLC.
 // License text can be found in the licenses/ folder.
 
-#pragma once
+#include "TrQtInit.h"
 
-#include <QVariant>
+#include <libtransmission-app/app.h>
 
-class CustomVariantType
+#include "VariantHelpers.h"
+
+namespace trqt
 {
-public:
-    enum
-    {
-        TrackerStatsList = QMetaType::User,
-        PeerList,
-        FileList,
-        ShowModeType,
-        SortModeType
-    };
-};
+
+void trqt_init()
+{
+    transmission::app::init();
+    trqt::variant_helpers::register_qt_converters();
+}
+
+} // namespace trqt

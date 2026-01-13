@@ -875,7 +875,7 @@ struct tr_torrent
         return idle_limit_minutes_;
     }
 
-    [[nodiscard]] constexpr std::optional<size_t> idle_seconds(time_t now) const noexcept
+    [[nodiscard]] constexpr std::optional<time_t> idle_seconds(time_t now) const noexcept
     {
         auto const activity = this->activity();
 
@@ -883,7 +883,7 @@ struct tr_torrent
         {
             if (auto const latest = std::max(date_started_, date_active_); latest != 0)
             {
-                return static_cast<size_t>(std::max(now - latest, time_t{ 0 }));
+                return std::max(now - latest, time_t{ 0 });
             }
         }
 
@@ -1035,6 +1035,7 @@ private:
     friend bool tr_torrentSetMetainfoFromFile(tr_torrent* tor, tr_torrent_metainfo const* metainfo, char const* filename);
     friend tr_file_view tr_torrentFile(tr_torrent const* tor, tr_file_index_t file);
     friend tr_stat const* tr_torrentStat(tr_torrent* tor);
+    friend std::vector<tr_stat const*> tr_torrentStat(tr_torrent* const* torrents, size_t n_torrents);
     friend tr_torrent* tr_torrentNew(tr_ctor* ctor, tr_torrent** setme_duplicate_of);
     friend uint64_t tr_torrentGetBytesLeftToAllocate(tr_torrent const* tor);
     friend void tr_torrentFreeInSessionThread(tr_torrent* tor);
@@ -1214,8 +1215,8 @@ private:
             return {};
         }
 
-        auto const idle_limit_seconds = size_t{ *idle_limit_minutes } * 60U;
-        return idle_limit_seconds > *idle_seconds ? idle_limit_seconds - *idle_seconds : 0U;
+        auto const idle_limit_seconds = static_cast<time_t>(*idle_limit_minutes * 60U);
+        return idle_limit_seconds > *idle_seconds ? idle_limit_seconds - *idle_seconds : time_t{ 0U };
     }
 
     [[nodiscard]] constexpr bool is_piece_transfer_allowed(tr_direction direction) const noexcept
@@ -1409,7 +1410,7 @@ private:
     time_t seconds_seeding_before_current_start_ = 0;
 
     float verify_progress_ = -1.0F;
-    float seed_ratio_ = 0.0F;
+    double seed_ratio_ = 0.0;
 
     tr_announce_key_t announce_key_ = tr_rand_obj<tr_announce_key_t>();
 

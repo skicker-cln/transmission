@@ -1265,9 +1265,10 @@ bool tr_torrentCanManualUpdate(tr_torrent const* tor)
 
 tr_stat tr_torrent::stats() const
 {
-    static auto constexpr IsStalled = [](tr_torrent const* const tor, std::optional<size_t> idle_secs)
+    static auto constexpr IsStalled = [](tr_torrent const* const tor, std::optional<time_t> idle_secs)
     {
-        return tor->session->queueStalledEnabled() && idle_secs > tor->session->queueStalledMinutes() * 60U;
+        return tor->session->queueStalledEnabled() &&
+            idle_secs > static_cast<time_t>(tor->session->queueStalledMinutes() * 60U);
     };
 
     auto const lock = unique_lock();
@@ -1285,7 +1286,7 @@ tr_stat tr_torrent::stats() const
     stats.activity = activity;
     stats.error = this->error().error_type();
     stats.queuePosition = queue_position();
-    stats.idleSecs = idle_seconds ? static_cast<time_t>(*idle_seconds) : -1;
+    stats.idleSecs = idle_seconds ? *idle_seconds : time_t{ -1 };
     stats.isStalled = IsStalled(this, idle_seconds);
     stats.errorString = this->error().errmsg().c_str();
 
@@ -1396,6 +1397,27 @@ tr_stat const* tr_torrentStat(tr_torrent* const tor)
 {
     tor->stats_ = tor->stats();
     return &tor->stats_;
+}
+
+std::vector<tr_stat const*> tr_torrentStat(tr_torrent* const* torrents, size_t n_torrents)
+{
+    auto ret = std::vector<tr_stat const*>{};
+
+    if (n_torrents != 0U)
+    {
+        ret.reserve(n_torrents);
+
+        auto const lock = torrents[0]->unique_lock();
+
+        for (size_t idx = 0U; idx != n_torrents; ++idx)
+        {
+            tr_torrent* const tor = torrents[idx];
+            tor->stats_ = tor->stats();
+            ret.emplace_back(&tor->stats_);
+        }
+    }
+
+    return ret;
 }
 
 // ---

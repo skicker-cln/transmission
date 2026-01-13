@@ -35,12 +35,12 @@
 #include "Session.h"
 
 #include "AddData.h"
-#include "CustomVariantType.h"
 #include "Filters.h"
 #include "Prefs.h"
 #include "RpcQueue.h"
 #include "SessionDialog.h"
 #include "Torrent.h"
+#include "UserMetaType.h"
 #include "VariantHelpers.h"
 
 using namespace std::literals;
@@ -63,7 +63,7 @@ void Session::sessionSet(tr_quark const key, QVariant const& value)
 #if QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
     switch (value.typeId())
 #else
-    switch (static_cast<QMetaType::Type>(value.type()))
+    switch (value.userType())
 #endif
     {
     case QMetaType::Bool:
@@ -80,6 +80,10 @@ void Session::sessionSet(tr_quark const key, QVariant const& value)
 
     case QMetaType::QString:
         dictAdd(&args, key, value.toString());
+        break;
+
+    case UserMetaType::EncryptionModeType:
+        *tr_variantDictAdd(&args, key) = to_variant(value.value<tr_encryption_mode>());
         break;
 
     default:
@@ -162,7 +166,7 @@ void Session::copyMagnetLinkToClipboard(int torrent_id)
 
 void Session::updatePref(int key)
 {
-    if (prefs_.isCore(key))
+    if (Prefs::isCore(key))
     {
         switch (key)
         {
@@ -182,6 +186,7 @@ void Session::updatePref(int key)
         case Prefs::DOWNLOAD_QUEUE_SIZE:
         case Prefs::DSPEED:
         case Prefs::DSPEED_ENABLED:
+        case Prefs::ENCRYPTION:
         case Prefs::IDLE_LIMIT:
         case Prefs::IDLE_LIMIT_ENABLED:
         case Prefs::INCOMPLETE_DIR:
@@ -204,11 +209,11 @@ void Session::updatePref(int key)
         case Prefs::USPEED:
         case Prefs::USPEED_ENABLED:
         case Prefs::UTP_ENABLED:
-            sessionSet(prefs_.getKey(key), prefs_.variant(key));
+            sessionSet(Prefs::getKey(key), prefs_.variant(key));
             break;
 
         case Prefs::DOWNLOAD_DIR:
-            sessionSet(prefs_.getKey(key), prefs_.variant(key));
+            sessionSet(Prefs::getKey(key), prefs_.variant(key));
             /* this will change the 'freespace' argument, so refresh */
             refreshSessionInfo();
             break;
@@ -221,31 +226,10 @@ void Session::updatePref(int key)
             sessionSet(TR_KEY_seed_ratio_limited, prefs_.variant(key));
             break;
 
-        case Prefs::ENCRYPTION:
-            switch (int const i = prefs_.variant(key).toInt(); i)
-            {
-            case 0:
-                sessionSet(prefs_.getKey(key), QStringLiteral("tolerated"));
-                break;
-
-            case 1:
-                sessionSet(prefs_.getKey(key), QStringLiteral("preferred"));
-                break;
-
-            case 2:
-                sessionSet(prefs_.getKey(key), QStringLiteral("required"));
-                break;
-
-            default:
-                break;
-            }
-
-            break;
-
         case Prefs::RPC_AUTH_REQUIRED:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCPasswordEnabled(session_, prefs_.getBool(key));
+                tr_sessionSetRPCPasswordEnabled(session_, prefs_.get<bool>(key));
             }
 
             break;
@@ -253,7 +237,7 @@ void Session::updatePref(int key)
         case Prefs::RPC_ENABLED:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCEnabled(session_, prefs_.getBool(key));
+                tr_sessionSetRPCEnabled(session_, prefs_.get<bool>(key));
             }
 
             break;
@@ -261,7 +245,7 @@ void Session::updatePref(int key)
         case Prefs::RPC_PASSWORD:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCPassword(session_, prefs_.getString(key).toUtf8().constData());
+                tr_sessionSetRPCPassword(session_, prefs_.get<QString>(key).toUtf8().constData());
             }
 
             break;
@@ -269,7 +253,7 @@ void Session::updatePref(int key)
         case Prefs::RPC_PORT:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCPort(session_, static_cast<uint16_t>(prefs_.getInt(key)));
+                tr_sessionSetRPCPort(session_, static_cast<uint16_t>(prefs_.get<int>(key)));
             }
 
             break;
@@ -277,7 +261,7 @@ void Session::updatePref(int key)
         case Prefs::RPC_USERNAME:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCUsername(session_, prefs_.getString(key).toUtf8().constData());
+                tr_sessionSetRPCUsername(session_, prefs_.get<QString>(key).toUtf8().constData());
             }
 
             break;
@@ -285,7 +269,7 @@ void Session::updatePref(int key)
         case Prefs::RPC_WHITELIST_ENABLED:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCWhitelistEnabled(session_, prefs_.getBool(key));
+                tr_sessionSetRPCWhitelistEnabled(session_, prefs_.get<bool>(key));
             }
 
             break;
@@ -293,7 +277,7 @@ void Session::updatePref(int key)
         case Prefs::RPC_WHITELIST:
             if (session_ != nullptr)
             {
-                tr_sessionSetRPCWhitelist(session_, prefs_.getString(key).toUtf8().constData());
+                tr_sessionSetRPCWhitelist(session_, prefs_.get<QString>(key).toUtf8().constData());
             }
 
             break;
@@ -363,7 +347,10 @@ void Session::start()
         }
         url.setHost(prefs_.get<QString>(Prefs::SESSION_REMOTE_HOST));
         url.setPort(prefs_.get<int>(Prefs::SESSION_REMOTE_PORT));
-        url.setPath(prefs_.get<QString>(Prefs::SESSION_REMOTE_RPC_URL_PATH));
+
+        auto const root_path = prefs_.get<QString>(Prefs::SESSION_REMOTE_URL_BASE_PATH);
+        auto const relative_path = TrHttpServerRpcRelativePath;
+        url.setPath(root_path + QString::fromUtf8(relative_path.data(), relative_path.size()));
 
         if (prefs_.get<bool>(Prefs::SESSION_REMOTE_AUTH))
         {
@@ -903,35 +890,14 @@ void Session::updateInfo(tr_variant* args_dict)
 
     for (int i = Prefs::FIRST_CORE_PREF; i <= Prefs::LAST_CORE_PREF; ++i)
     {
-        tr_variant const* b(tr_variantDictFind(args_dict, prefs_.getKey(i)));
+        tr_variant const* b(tr_variantDictFind(args_dict, Prefs::getKey(i)));
 
         if (b == nullptr)
         {
             continue;
         }
 
-        if (i == Prefs::ENCRYPTION)
-        {
-            if (auto const str = getValue<QString>(b); str)
-            {
-                if (*str == QStringLiteral("required"))
-                {
-                    prefs_.set(i, 2);
-                }
-                else if (*str == QStringLiteral("preferred"))
-                {
-                    prefs_.set(i, 1);
-                }
-                else if (*str == QStringLiteral("tolerated"))
-                {
-                    prefs_.set(i, 0);
-                }
-            }
-
-            continue;
-        }
-
-        switch (prefs_.type(i))
+        switch (Prefs::type(i))
         {
         case QMetaType::Int:
             if (auto const value = getValue<int>(b); value)
@@ -957,16 +923,8 @@ void Session::updateInfo(tr_variant* args_dict)
 
             break;
 
-        case CustomVariantType::ShowModeType:
-            if (auto const val = to_value<ShowMode>(*b))
-            {
-                prefs_.set(i, *val);
-            }
-
-            break;
-
-        case CustomVariantType::SortModeType:
-            if (auto const val = to_value<SortMode>(*b))
+        case UserMetaType::EncryptionModeType:
+            if (auto const val = to_value<tr_encryption_mode>(*b))
             {
                 prefs_.set(i, *val);
             }
@@ -1047,7 +1005,7 @@ void Session::addTorrent(AddData add_me, tr_variant* args_dict)
 
     if (tr_variantDictFind(args_dict, TR_KEY_paused) == nullptr)
     {
-        dictAdd(args_dict, TR_KEY_paused, !prefs_.getBool(Prefs::START));
+        dictAdd(args_dict, TR_KEY_paused, !prefs_.get<bool>(Prefs::START));
     }
 
     switch (add_me.type)
@@ -1153,7 +1111,7 @@ void Session::addNewlyCreatedTorrent(QString const& filename, QString const& loc
     tr_variant args;
     tr_variantInitDict(&args, 3);
     dictAdd(&args, TR_KEY_download_dir, local_path);
-    dictAdd(&args, TR_KEY_paused, !prefs_.getBool(Prefs::START));
+    dictAdd(&args, TR_KEY_paused, !prefs_.get<bool>(Prefs::START));
     dictAdd(&args, TR_KEY_metainfo, b64);
 
     exec(TR_KEY_torrent_add, &args);
@@ -1207,13 +1165,16 @@ void Session::launchWebInterface() const
     if (session_ == nullptr) // remote session
     {
         url = rpc_.url();
-        url.setPath(QStringLiteral("/transmission/web/"));
+
+        auto const root_path = prefs_.get<QString>(Prefs::SESSION_REMOTE_URL_BASE_PATH);
+        auto const relative_path = TrHttpServerWebRelativePath;
+        url.setPath(root_path + QString::fromUtf8(relative_path.data(), relative_path.size()));
     }
     else // local session
     {
         url.setScheme(QStringLiteral("http"));
         url.setHost(QStringLiteral("localhost"));
-        url.setPort(prefs_.getInt(Prefs::RPC_PORT));
+        url.setPort(prefs_.get<int>(Prefs::RPC_PORT));
     }
 
     QDesktopServices::openUrl(url);
