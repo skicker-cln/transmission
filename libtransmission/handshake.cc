@@ -340,6 +340,7 @@ ReadState tr_handshake::read_peer_id(tr_peerIo* peer_io)
     if ((std::strncmp(std::data(peer_id),"-XL0018",7)==0)||
         (std::strncmp(std::data(peer_id),"-XL0012",7)==0)||
         (std::strncmp(std::data(peer_id),"-qB4670",7)==0)||
+        (std::strncmp(std::data(peer_id),"A2-1-37",7)==0)||
         (std::strncmp(std::data(peer_id),"-GT00",5)==0)||
         (std::strncmp(std::data(peer_id),"-HP00",5)==0)
         //||((peer_id[2]=='-')&&(peer_id[7]=='-'))
