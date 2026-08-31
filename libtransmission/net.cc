@@ -22,7 +22,6 @@
 #else
 #include <ifaddrs.h>
 #include <net/if.h>
-#include <netinet/tcp.h> /* TCP_CONGESTION */
 #endif
 
 #include <event2/util.h>
@@ -33,9 +32,10 @@
 #include "libtransmission/net.h"
 #include "libtransmission/peer-socket.h"
 #include "libtransmission/session.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/tr-macros.h"
 #include "libtransmission/tr-strbuf.h"
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h"
 
 using namespace std::literals;
@@ -113,7 +113,7 @@ int tr_make_listen_socket_ipv6only(tr_socket_t const sock)
 
 void tr_netSetDiffServ([[maybe_unused]] tr_socket_t s, [[maybe_unused]] int tos, tr_address_type type)
 {
-    if (s == TR_BAD_SOCKET)
+    if (!is_valid_socket(s))
     {
         return;
     }
@@ -144,143 +144,6 @@ void tr_netSetDiffServ([[maybe_unused]] tr_socket_t s, [[maybe_unused]] int tos,
     }
 }
 
-void tr_netSetCongestionControl([[maybe_unused]] tr_socket_t s, [[maybe_unused]] char const* algorithm)
-{
-#ifdef TCP_CONGESTION
-
-    if (setsockopt(s, IPPROTO_TCP, TCP_CONGESTION, (void const*)algorithm, strlen(algorithm) + 1) == -1)
-    {
-        tr_logAddDebug(fmt::format("Can't set congestion control algorithm '{}': {}", algorithm, tr_net_strerror(sockerrno)));
-    }
-
-#endif
-}
-
-namespace
-{
-tr_socket_t createSocket(int domain, int type)
-{
-    auto const sockfd = socket(domain, type, 0);
-    if (sockfd == TR_BAD_SOCKET)
-    {
-        if (sockerrno != EAFNOSUPPORT)
-        {
-            tr_logAddWarn(
-                fmt::format(
-                    fmt::runtime(_("Couldn't create socket: {error} ({error_code})")),
-                    fmt::arg("error", tr_net_strerror(sockerrno)),
-                    fmt::arg("error_code", sockerrno)));
-        }
-
-        return TR_BAD_SOCKET;
-    }
-
-    if (evutil_make_socket_nonblocking(sockfd) == -1)
-    {
-        tr_net_close_socket(sockfd);
-        return TR_BAD_SOCKET;
-    }
-
-    if (static bool buf_logged = false; !buf_logged)
-    {
-        int i = 0;
-        socklen_t size = sizeof(i);
-
-        if (getsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&i), &size) != -1)
-        {
-            tr_logAddTrace(fmt::format("SO_SNDBUF size is {}", i));
-        }
-
-        i = 0;
-        size = sizeof(i);
-
-        if (getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<char*>(&i), &size) != -1)
-        {
-            tr_logAddTrace(fmt::format("SO_RCVBUF size is {}", i));
-        }
-
-        buf_logged = true;
-    }
-
-    return sockfd;
-}
-} // namespace
-
-tr_socket_t tr_net_open_peer_socket(tr_session* session, tr_socket_address const& socket_address, bool client_is_seed)
-{
-    auto const& [addr, port] = socket_address;
-
-    TR_ASSERT(addr.is_valid());
-
-    if (!session->allowsTCP() || !socket_address.is_valid())
-    {
-        return TR_BAD_SOCKET;
-    }
-
-    auto const s = createSocket(tr_ip_protocol_to_af(addr.type), SOCK_STREAM);
-    if (s == TR_BAD_SOCKET)
-    {
-        return TR_BAD_SOCKET;
-    }
-
-    // seeds don't need a big read buffer, so make it smaller
-    if (client_is_seed)
-    {
-        int n = 8192;
-
-        if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<char const*>(&n), sizeof(n)) == -1)
-        {
-            tr_logAddDebug(fmt::format("Unable to set SO_RCVBUF on socket {}: {}", s, tr_net_strerror(sockerrno)));
-        }
-    }
-
-    auto const [sock, addrlen] = socket_address.to_sockaddr();
-
-    // set source address
-    auto const source_addr = session->bind_address(addr.type);
-    auto const [source_sock, sourcelen] = tr_socket_address::to_sockaddr(source_addr, {});
-
-    if (bind(s, reinterpret_cast<sockaddr const*>(&source_sock), sourcelen) == -1)
-    {
-        tr_logAddWarn(
-            fmt::format(
-                fmt::runtime(_("Couldn't set source address {address} on {socket}: {error} ({error_code})")),
-                fmt::arg("address", source_addr.display_name()),
-                fmt::arg("socket", s),
-                fmt::arg("error", tr_net_strerror(sockerrno)),
-                fmt::arg("error_code", sockerrno)));
-        tr_net_close_socket(s);
-        return TR_BAD_SOCKET;
-    }
-
-    if (connect(s, reinterpret_cast<sockaddr const*>(&sock), addrlen) == -1 &&
-#ifdef _WIN32
-        sockerrno != WSAEWOULDBLOCK &&
-#endif
-        sockerrno != EINPROGRESS)
-    {
-        if (auto const tmperrno = sockerrno;
-            (tmperrno != ECONNREFUSED && tmperrno != ENETUNREACH && tmperrno != EHOSTUNREACH) || addr.is_ipv4())
-        {
-            tr_logAddWarn(
-                fmt::format(
-                    fmt::runtime(_("Couldn't connect socket {socket} to {address}:{port}: {error} ({error_code})")),
-                    fmt::arg("socket", s),
-                    fmt::arg("address", addr.display_name()),
-                    fmt::arg("port", port.host()),
-                    fmt::arg("error", tr_net_strerror(tmperrno)),
-                    fmt::arg("error_code", tmperrno)));
-        }
-
-        tr_net_close_socket(s);
-        return TR_BAD_SOCKET;
-    }
-
-    tr_logAddTrace(fmt::format("New OUTGOING connection {} ({})", s, socket_address.display_name()));
-
-    return s;
-}
-
 namespace
 {
 tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppress_msgs, int* err_out)
@@ -288,13 +151,13 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
     TR_ASSERT(addr.is_valid());
 
     auto const fd = socket(tr_ip_protocol_to_af(addr.type), SOCK_STREAM, 0);
-    if (fd == TR_BAD_SOCKET)
+    if (!is_valid_socket(fd))
     {
         *err_out = sockerrno;
         return TR_BAD_SOCKET;
     }
 
-    if (evutil_make_socket_nonblocking(fd) == -1)
+    if (evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(fd)) == -1)
     {
         *err_out = sockerrno;
         tr_net_close_socket(fd);
@@ -303,7 +166,7 @@ tr_socket_t tr_netBindTCPImpl(tr_address const& addr, tr_port port, bool suppres
 
     int optval = 1;
     (void)setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char const*>(&optval), sizeof(optval));
-    (void)evutil_make_listen_socket_reuseable(fd);
+    (void)evutil_make_listen_socket_reuseable(static_cast<evutil_socket_t>(fd));
 
     if (addr.is_ipv6() && tr_make_listen_socket_ipv6only(fd) == -1 &&
         sockerrno != ENOPROTOOPT) // if the kernel doesn't support it, ignore it
@@ -384,7 +247,7 @@ std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session
     auto sock = sockaddr_storage{};
     socklen_t len = sizeof(struct sockaddr_storage);
     auto const sockfd = accept(listening_sockfd, reinterpret_cast<sockaddr*>(&sock), &len);
-    if (sockfd == TR_BAD_SOCKET)
+    if (!is_valid_socket(sockfd))
     {
         return {};
     }
@@ -393,7 +256,8 @@ std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session
     // make the socket unblocking,
     // and confirm we don't have too many peers
     auto const addrport = tr_socket_address::from_sockaddr(reinterpret_cast<struct sockaddr*>(&sock));
-    if (!addrport || evutil_make_socket_nonblocking(sockfd) == -1 || tr_peer_socket::limit_reached(session))
+    if (!addrport || evutil_make_socket_nonblocking(static_cast<evutil_socket_t>(sockfd)) == -1 ||
+        tr_peer_socket::limit_reached(session))
     {
         tr_net_close_socket(sockfd);
         return {};
@@ -404,7 +268,7 @@ std::optional<std::pair<tr_socket_address, tr_socket_t>> tr_netAccept(tr_session
 
 void tr_net_close_socket(tr_socket_t sockfd)
 {
-    evutil_closesocket(sockfd);
+    evutil_closesocket(static_cast<evutil_socket_t>(sockfd));
 }
 
 // ---
@@ -428,6 +292,16 @@ namespace is_valid_for_peers_helpers
 } // namespace
 
 // --- tr_port
+
+tr_port tr_port::from_network(uint16_t const nport) noexcept
+{
+    return tr_port{ ntohs(nport) };
+}
+
+uint16_t tr_port::network() const noexcept
+{
+    return htons(hport_);
+}
 
 std::pair<tr_port, std::byte const*> tr_port::from_compact(std::byte const* compact) noexcept
 {
@@ -472,20 +346,15 @@ std::optional<tr_address> tr_address::from_string(std::string_view address_sv)
     }
 }
 
-std::string_view tr_address::display_name(char* out, size_t outlen) const
-{
-    TR_ASSERT(is_valid());
-    if (auto* name = evutil_inet_ntop(tr_ip_protocol_to_af(type), &addr, out, outlen))
-    {
-        return name;
-    }
-    return "Invalid address"sv;
-}
-
 [[nodiscard]] std::string tr_address::display_name() const
 {
     auto buf = std::array<char, std::max(INET_ADDRSTRLEN, INET6_ADDRSTRLEN)>{};
-    return std::string{ display_name(std::data(buf), std::size(buf)) };
+    TR_ASSERT(is_valid());
+    if (auto* name = evutil_inet_ntop(tr_ip_protocol_to_af(type), &addr, std::data(buf), std::size(buf)))
+    {
+        return std::string{ name };
+    }
+    return std::string{ "Invalid address" };
 }
 
 std::pair<tr_address, std::byte const*> tr_address::from_compact_ipv4(std::byte const* compact) noexcept
@@ -606,16 +475,26 @@ std::optional<unsigned> tr_address::to_interface_index() const noexcept
     return {};
 }
 
-int tr_address::compare(tr_address const& that) const noexcept // <=>
+std::strong_ordering tr_address::operator<=>(tr_address const& that) const noexcept
 {
     // IPv6 addresses are always "greater than" IPv4
-    if (auto const val = tr_compare_3way(this->type, that.type); val != 0)
+    if (auto const val = this->type <=> that.type; val != 0)
     {
         return val;
     }
 
-    return this->is_ipv4() ? memcmp(&this->addr.addr4, &that.addr.addr4, sizeof(this->addr.addr4)) :
-                             memcmp(&this->addr.addr6.s6_addr, &that.addr.addr6.s6_addr, sizeof(this->addr.addr6.s6_addr));
+    auto const val = this->is_ipv4() ?
+        memcmp(&this->addr.addr4, &that.addr.addr4, sizeof(this->addr.addr4)) :
+        memcmp(&this->addr.addr6.s6_addr, &that.addr.addr6.s6_addr, sizeof(this->addr.addr6.s6_addr));
+    if (val < 0)
+    {
+        return std::strong_ordering::less;
+    }
+    if (val > 0)
+    {
+        return std::strong_ordering::greater;
+    }
+    return std::strong_ordering::equal;
 }
 
 // https://en.wikipedia.org/wiki/Reserved_IP_addresses
@@ -665,7 +544,7 @@ std::optional<tr_address> tr_address::from_ipv4_mapped() const noexcept
 
 // --- tr_socket_addrses
 
-std::string tr_socket_address::display_name(tr_address const& address, tr_port port) noexcept
+std::string tr_socket_address::display_name(tr_address const& address, tr_port port)
 {
     return fmt::format(fmt::runtime(address.is_ipv6() ? "[{:s}]:{:d}" : "{:s}:{:d}"), address.display_name(), port.host());
 }

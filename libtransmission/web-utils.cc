@@ -10,6 +10,7 @@
 #include <cstdlib> // for strtoul()
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -19,13 +20,14 @@
 #define PSL_STATIC
 #include <libpsl.h>
 
+#include "libtransmission/web-utils.h"
+
 #include "libtransmission/log.h"
 #include "libtransmission/net.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/tr-macros.h"
 #include "libtransmission/tr-strbuf.h"
 #include "libtransmission/utils.h"
-#include "libtransmission/web-utils.h"
 
 using namespace std::literals;
 
@@ -197,7 +199,7 @@ constexpr std::optional<uint16_t> getPortForScheme(std::string_view scheme)
     return {};
 }
 
-TR_CONSTEXPR20 bool urlCharsAreValid(std::string_view url)
+constexpr bool urlCharsAreValid(std::string_view url)
 {
     // rfc2396
     auto constexpr ValidChars = std::string_view{
@@ -210,22 +212,18 @@ TR_CONSTEXPR20 bool urlCharsAreValid(std::string_view url)
         "{}|\\^[]`" // unwise
     };
 
-    return !std::empty(url) &&
-        std::all_of(std::begin(url), std::end(url), [&ValidChars](auto ch) { return tr_strv_contains(ValidChars, ch); });
+    return !std::empty(url) && std::ranges::all_of(url, [&ValidChars](auto ch) { return tr_strv_contains(ValidChars, ch); });
 }
 
 bool tr_isValidTrackerScheme(std::string_view scheme)
 {
     auto constexpr Schemes = std::array<std::string_view, 3>{ "http"sv, "https"sv, "udp"sv };
-    return std::find(std::begin(Schemes), std::end(Schemes), scheme) != std::end(Schemes);
+    return std::ranges::find(Schemes, scheme) != std::ranges::end(Schemes);
 }
 
 bool isAsciiNonUpperCase(std::string_view host)
 {
-    return std::all_of(
-        std::begin(host),
-        std::end(host),
-        [](unsigned char ch) { return (ch < 128) && (std::isupper(ch) == 0); });
+    return std::ranges::all_of(host, [](unsigned char ch) { return (ch < 128) && (std::isupper(ch) == 0); });
 }
 
 // www.example.com -> example
@@ -305,14 +303,21 @@ std::optional<tr_url_parsed_t> tr_urlParse(std::string_view url)
     auto parsed = tr_url_parsed_t{};
     parsed.full = url;
 
-    // So many magnet links are malformed, e.g. not escaping text
-    // in the display name, that we're better off handling magnets
-    // as a special case before even scanning for invalid chars.
-    if (auto constexpr MagnetStart = "magnet:?"sv; tr_strv_starts_with(url, MagnetStart))
+    // So many magnet links are malformed, e.g. not escaping text in the display
+    // name, that we're better off handling magnets as a special case before even
+    // scanning for invalid chars. Any run of slashes between the scheme and the
+    // query is skipped in the same spirit: a magnet link has no authority, but a
+    // URI library that insists on one spells it empty, so GLib hands over
+    // "magnet:///?xt=..." for what was written "magnet:?xt=...".
+    if (auto constexpr Scheme = "magnet:"sv; tr_strv_starts_with(url, Scheme))
     {
-        parsed.scheme = "magnet"sv;
-        parsed.query = url.substr(std::size(MagnetStart));
-        return parsed;
+        auto const rest = url.substr(std::size(Scheme));
+        if (auto const pos = rest.find_first_not_of('/'); pos != std::string_view::npos && rest[pos] == '?')
+        {
+            parsed.scheme = "magnet"sv;
+            parsed.query = rest.substr(pos + 1U);
+            return parsed;
+        }
     }
 
     if (!urlCharsAreValid(url))
@@ -434,7 +439,7 @@ bool tr_urlIsValid(std::string_view url)
 {
     auto constexpr Schemes = std::array<std::string_view, 5>{ "http"sv, "https"sv, "ftp"sv, "sftp"sv, "udp"sv };
     auto const parsed = tr_urlParse(url);
-    return parsed && std::find(std::begin(Schemes), std::end(Schemes), parsed->scheme) != std::end(Schemes);
+    return parsed && std::ranges::find(Schemes, parsed->scheme) != std::ranges::end(Schemes);
 }
 
 std::string tr_urlTrackerLogName(std::string_view url)

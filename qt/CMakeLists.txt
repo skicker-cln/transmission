@@ -70,6 +70,7 @@ target_sources(${TR_NAME}-qt-lib
         Prefs.h
         PrefsDialog.cc
         PrefsDialog.h
+        QtCompat.h
         RelocateDialog.cc
         RelocateDialog.h
         RpcClient.cc
@@ -271,6 +272,7 @@ set(ICON_NAME_REGEX "^([^_]+)_([^_]+)_([^_]+)_(.+)$")
 foreach(ICON ${PUBLIC_ICONS})
     string(REGEX REPLACE ${ICON_NAME_REGEX} "\\1/\\3/\\2" ICON_DIR ${ICON})
     string(REGEX REPLACE ${ICON_NAME_REGEX} "\\4" ICON_NAME ${ICON})
+    string(REGEX REPLACE "^transmission" "transmission-qt" ICON_NAME ${ICON_NAME})
     install(
         FILES ${SOURCE_ICONS_DIR}/${ICON}
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/${ICON_DIR}/

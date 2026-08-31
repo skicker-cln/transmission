@@ -22,24 +22,24 @@ find_library(${CMAKE_FIND_PACKAGE_NAME}_LIBRARY
 include(CheckCXXSymbolExists)
 
 set(_UTP_FUNCS
-        utp_check_timeouts
-        utp_close
-        utp_connect
-        utp_context_get_userdata
-        utp_context_set_option
-        utp_context_set_userdata
-        utp_create_socket
-        utp_destroy
-        utp_getpeername
-        utp_get_userdata
-        utp_init
-        utp_issue_deferred_acks
-        utp_process_udp
-        utp_read_drained
-        utp_set_callback
-        utp_set_userdata
-        utp_write
-        utp_writev)
+    utp_check_timeouts
+    utp_close
+    utp_connect
+    utp_context_get_userdata
+    utp_context_set_option
+    utp_context_set_userdata
+    utp_create_socket
+    utp_destroy
+    utp_getpeername
+    utp_get_userdata
+    utp_init
+    utp_issue_deferred_acks
+    utp_process_udp
+    utp_read_drained
+    utp_set_callback
+    utp_set_userdata
+    utp_write
+    utp_writev)
 
 set(_UTP_OLD_CMAKE_REQUIRED_INCLUDES "${CMAKE_REQUIRED_INCLUDES}")
 set(_UTP_OLD_CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES}")

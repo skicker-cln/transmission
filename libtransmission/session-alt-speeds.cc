@@ -10,10 +10,9 @@
 
 #include <fmt/chrono.h>
 
-#include "libtransmission/transmission.h"
-
 #include "libtransmission/log.h"
 #include "libtransmission/session-alt-speeds.h"
+#include "libtransmission/types.h"
 #include "libtransmission/variant.h"
 #include "libtransmission/utils.h" // for _()
 
@@ -77,7 +76,7 @@ void tr_session_alt_speeds::set_active(bool active, ChangeReason reason, bool fo
     }
 }
 
-[[nodiscard]] bool tr_session_alt_speeds::is_active_minute(time_t time) const noexcept
+[[nodiscard]] bool tr_session_alt_speeds::is_active_minute(time_t time) const
 {
     auto const tm = *std::localtime(&time);
 

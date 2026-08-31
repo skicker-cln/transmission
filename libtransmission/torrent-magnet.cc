@@ -11,6 +11,7 @@
 #include <ios>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -22,13 +23,13 @@
 
 #include "libtransmission/crypto-utils.h" // for tr_sha1()
 #include "libtransmission/error.h"
+#include "libtransmission/file-utils.h"
 #include "libtransmission/file.h"
 #include "libtransmission/quark.h"
 #include "libtransmission/torrent-magnet.h"
 #include "libtransmission/torrent-metainfo.h"
 #include "libtransmission/torrent.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/utils.h"
 #include "libtransmission/variant.h"
 
 #define tr_logAddDebugMagnet(magnet, msg) tr_logAddDebug(msg, (magnet)->log_name())
@@ -100,7 +101,7 @@ void tr_torrent::maybe_start_metadata_transfer(int64_t const size) noexcept
     using size_type = std::remove_cv_t<decltype(info_dict_size)>;
     TR_ASSERT(info_dict_size > 0);
     if (auto const n_pieces = std::max(size_type{ 1 }, n_metadata_pieces(info_dict_size));
-        piece < 0 || static_cast<size_type>(piece) >= n_pieces)
+        piece < 0 || std::cmp_greater_equal(piece, n_pieces))
     {
         return {};
     }
@@ -132,7 +133,7 @@ void tr_torrent::maybe_start_metadata_transfer(int64_t const size) noexcept
 bool tr_torrent::use_metainfo_from_file(tr_torrent_metainfo const* metainfo, char const* filename_in, tr_error* error)
 {
     // add .torrent file
-    if (!tr_sys_path_copy(filename_in, torrent_file().c_str(), error))
+    if (!tr_sys_path_copy(filename_in, torrent_file(), error))
     {
         return false;
     }
@@ -289,17 +290,14 @@ bool tr_metadata_download::set_metadata_piece(int64_t const piece, void const* c
 
     // do we need this piece?
     auto& needed = pieces_needed_;
-    auto const iter = std::find_if(
-        std::begin(needed),
-        std::end(needed),
-        [piece](auto const& item) { return item.piece == piece; });
-    if (iter == std::end(needed))
+    auto const iter = std::ranges::find_if(needed, [piece](auto const& item) { return item.piece == piece; });
+    if (iter == std::ranges::end(needed))
     {
         return false;
     }
 
     auto const offset = piece * MetadataPieceSize;
-    std::copy_n(reinterpret_cast<char const*>(data), len, std::begin(metadata_) + offset);
+    std::copy_n(static_cast<char const*>(data), len, std::begin(metadata_) + offset);
 
     needed.erase(iter);
     tr_logAddDebugMagnet(this, fmt::format("saving metainfo piece {}... {} remain", piece, std::size(needed)));
@@ -388,9 +386,4 @@ void tr_torrent::set_metadata_piece(int64_t const piece, void const* const data,
 std::string tr_torrentGetMagnetLink(tr_torrent const* tor)
 {
     return tor->magnet();
-}
-
-size_t tr_torrentGetMagnetLinkToBuf(tr_torrent const* tor, char* buf, size_t buflen)
-{
-    return tr_strv_to_buf(tr_torrentGetMagnetLink(tor), buf, buflen);
 }

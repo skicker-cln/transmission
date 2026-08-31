@@ -20,17 +20,17 @@
 
 #define LIBTRANSMISSION_PORT_FORWARDING_MODULE
 
-#include "libtransmission/transmission.h"
-
+#include "libtransmission/constants.h"
 #include "libtransmission/log.h"
 #include "libtransmission/net.h"
 #include "libtransmission/port-forwarding-upnp.h"
+#include "libtransmission/string-utils.h"
 #include "libtransmission/tr-assert.h"
-#include "libtransmission/tr-macros.h" // TrAddrStrlen
+#include "libtransmission/types.h"
 #include "libtransmission/utils.h" // for _(), tr_strerror()
 
 #ifndef MINIUPNPC_API_VERSION
-#error "MINIUPNPC_API_VERSION macro not defined"
+#error miniupnpc >= 1.7 is required
 #endif
 
 namespace

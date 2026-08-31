@@ -52,8 +52,8 @@ if(${CMAKE_FIND_PACKAGE_NAME}_FOUND)
 
     if(NOT TARGET fmt::fmt-header-only)
         add_library(fmt::fmt-header-only INTERFACE IMPORTED)
-        target_compile_definitions(fmt::fmt-header-only-only INTERFACE FMT_HEADER_ONLY=1)
-        target_compile_features(fmt::fmt-header-only-only INTERFACE cxx_std_11)
+        target_compile_definitions(fmt::fmt-header-only INTERFACE FMT_HEADER_ONLY=1)
+        target_compile_features(fmt::fmt-header-only INTERFACE cxx_std_11)
         target_include_directories(fmt::fmt-header-only
             INTERFACE
                 ${${CMAKE_FIND_PACKAGE_NAME}_INCLUDE_DIR})
